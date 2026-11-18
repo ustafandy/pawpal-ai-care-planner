@@ -1,9 +1,14 @@
+import logging
 from datetime import date
 from datetime import time as clock_time
 
 import streamlit as st
 
+from ai_planner import plan_with_ai
 from pawpal_system import Owner, Pet, Scheduler, Task
+
+# AI workflow events (requests, validation, fallbacks) are logged to the terminal.
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
 st.set_page_config(page_title="PawPal+", page_icon="🐾", layout="centered")
 
@@ -226,3 +231,76 @@ if st.button("Generate schedule"):
 
     with st.expander("Why this plan?", expanded=True):
         st.text(scheduler.explain_plan())
+
+st.divider()
+
+st.subheader("🤖 AI Care Planner")
+st.caption(
+    "Tell PawPal+ anything important about today's care needs. The AI may recommend "
+    "priority changes or a smaller time budget, but the deterministic scheduler still "
+    "creates the final plan. Your saved tasks are never changed."
+)
+
+owner_note = st.text_area(
+    "Today's situation",
+    placeholder=(
+        "Mochi needs her medication tonight. Biscuit has a lot of energy today, "
+        "but I only have about 45 minutes."
+    ),
+)
+
+if st.button("Generate AI Care Plan"):
+    with st.spinner("Asking the AI planner..."):
+        result = plan_with_ai(owner, owner_note)
+
+    if result.used_ai:
+        st.success("✅ AI recommendation passed validation and was applied to today's plan.")
+        if result.summary:
+            st.markdown(f"**AI summary:** {result.summary}")
+        if result.reasons:
+            st.markdown("**Recommended changes:**")
+            for reason in result.reasons:
+                st.markdown(f"- {reason}")
+        else:
+            st.info("The AI recommended no changes.")
+    else:
+        st.warning(
+            "⚠️ The AI planner was not used: it was unavailable or its response failed "
+            "validation. PawPal+ safely used the standard deterministic scheduler instead."
+        )
+    for warning in result.warnings:
+        st.caption(f"Guardrail note: {warning}")
+
+    st.metric(
+        "Effective available minutes",
+        result.effective_minutes,
+        delta=result.effective_minutes - owner.available_minutes or None,
+    )
+
+    if result.plan:
+        used = sum(task.duration_minutes for _, task in result.plan)
+        st.write(f"Scheduled {len(result.plan)} task(s) using {used} of {result.effective_minutes} minutes.")
+        st.table(
+            [
+                {
+                    "order": index,
+                    "time": task.time,
+                    "pet": pet.name,
+                    "title": task.title,
+                    "minutes": task.duration_minutes,
+                    "priority used": task.priority,
+                }
+                for index, (pet, task) in enumerate(result.plan, start=1)
+            ]
+        )
+    else:
+        st.warning("No tasks could be scheduled for today.")
+
+    if result.skipped:
+        st.warning(
+            "Skipped (not enough time): "
+            + ", ".join(f"{task.title} ({pet.name})" for pet, task in result.skipped)
+        )
+
+    with st.expander("Why this plan?"):
+        st.text(result.explanation)

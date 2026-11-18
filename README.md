@@ -1,219 +1,214 @@
-# PawPal+ (Module 2 Project)
+# 🐾 PawPal AI Care Planner
 
-**PawPal+** is a Streamlit app that helps a busy pet owner plan daily care across all of their pets. It tracks care tasks (walks, feeding, medication, grooming, enrichment), builds a daily plan that fits the owner's available time and respects task priority, and explains why each task was scheduled or skipped.
+PawPal AI Care Planner extends my original **PawPal+** pet-care scheduler with a constrained
+AI planning layer. A pet owner describes today in plain language, for example "Mochi needs
+her medication tonight… I only have 45 minutes". Claude turns that note into a small,
+structured recommendation, and strict guardrails validate it. The original deterministic
+Scheduler still builds the final plan. **Claude never creates the schedule directly.** It
+can only suggest limited changes, and if anything goes wrong the app falls back to the
+original Scheduler.
 
-## Scenario
+---
 
-A busy pet owner needs help staying consistent with pet care. They want an assistant that can:
+## Original project: PawPal+ (Module 2 base project)
 
-- Track pet care tasks (walks, feeding, meds, enrichment, grooming, etc.)
-- Consider constraints (time available, priority, owner preferences)
-- Produce a daily plan and explain why it chose that plan
+PawPal+ was my Module 2 project. It is a Streamlit app in which an owner manages multiple
+pets and their care tasks; each task has a duration, a priority, a start time, a
+recurrence, and a due date. Its deterministic `Scheduler` builds a daily plan by priority
+(high first, shorter tasks first on ties) within the owner's available minutes, and it
+explains why each task was scheduled or skipped. The app also sorts and filters tasks,
+creates the next occurrence of daily or weekly tasks, and detects tasks booked at the same
+time.
 
-The system was designed first as a UML diagram, then implemented in Python, tested with pytest, and connected to a Streamlit UI.
+| | Original PawPal+ (Module 2) | New in the final project |
+|---|---|---|
+| Core | `Owner` / `Pet` / `Task` / `Scheduler` in `pawpal_system.py` | `ai_planner.py` (AI layer on top, core unchanged) |
+| Input | Forms for pets and tasks | **Natural-language "Today's situation" note** |
+| Planning | Deterministic priority + time-budget scheduling | Claude recommends priority/time changes → validated → same Scheduler |
+| Reliability | 17 unit tests | 31 additional AI/guardrail tests, logging, safe fallback |
+| Docs | UML, reflection | Architecture diagram, `evaluation.md`, `model_card.md` |
 
-## ✨ Features
+---
 
-- **Multi-pet management:** one owner can have any number of pets. Every task keeps its pet context, so Biscuit's "Feeding" and Mochi's "Feeding" are never confused.
-- **Task management:** each task has a title, duration, priority (low/medium/high), start time (`HH:MM`), repeat frequency (none/daily/weekly), due date, and completion status. Invalid times and unknown frequencies are rejected with a clear `ValueError`.
-- **Priority- and time-based scheduling:** `Scheduler.generate_plan()` takes all pending tasks due today or earlier, orders them by priority (high first, shorter tasks first on ties), and adds them until the owner's available minutes run out. Tasks that don't fit are skipped, and `explain_plan()` explains every decision.
-- **Sorting:** `Scheduler.sort_by_time()` orders tasks by due date, then by start time, across all pets.
-- **Filtering:** `Scheduler.filter_tasks()` filters tasks by pet name (case-insensitive), completion status, or both.
-- **Recurring daily/weekly tasks:** completing a recurring task with `Pet.complete_task()` automatically adds its next occurrence (+1 day or +7 days). Completing the same task twice never creates duplicates, and future occurrences stay out of today's plan.
-- **Conflict detection:** `Scheduler.detect_conflicts()` warns when two or more pending tasks share the same date and start time, including tasks for different pets.
-- **Streamlit UI:** add pets and tasks, view, sort, and filter tasks, mark tasks complete, see conflict warnings, and generate an explained daily schedule in the browser.
-- **Automated testing:** 17 pytest tests cover scheduling, sorting, filtering, recurrence, conflict detection, and edge cases.
+## The new AI Care Planner
 
-## Getting started
+1. **The owner enters context** in the Streamlit "AI Care Planner" section.
+2. **Claude receives limited task context:** the owner's available minutes and each pet's pending tasks due today. Every task has a short ID (`t1`, `t2`, …), so Claude refers to real tasks instead of inventing names.
+3. **Claude recommends, as structured JSON:**
+   - priority changes for existing tasks;
+   - optionally, a **smaller or unchanged** time budget;
+   - a short reason for each change and a one-sentence summary.
+4. **Strict validation and guardrails** check the entire response.
+5. **Valid changes are applied to a deep copy** of the Owner. The user's real data is never modified.
+6. **The deterministic Scheduler** (the unchanged original code) creates the final schedule from that copy.
+7. **Fallback:** an invalid response, an API failure, a missing key, or a blank note means the original Scheduler runs on the original Owner. The UI says clearly that the standard plan was used.
 
-### Setup
+> **Claude does NOT create the final schedule.** It can only adjust priorities and shrink
+> the time budget. The deterministic Scheduler is always the final scheduling authority.
 
-```bash
+---
+
+## Architecture
+
+The authoritative diagram is [`diagrams/architecture.mmd`](diagrams/architecture.mmd).
+A simplified version:
+
+```mermaid
+flowchart LR
+    IN["Owner/Pets/Tasks<br/>+ Today's note"] --> AI["Claude<br/>(recommends only)"]
+    AI -- "JSON" --> V{"Validation +<br/>guardrails"}
+    V -- "valid" --> C["Deep copy of Owner<br/>with changes"]
+    V -- "invalid" --> F["Original Owner<br/>(unchanged)"]
+    AI -. "API error / no key" .-> F
+    C --> S[["Deterministic<br/>Scheduler"]]
+    F --> S
+    S --> P["Final Care Plan"]
+```
+
+---
+
+## Setup and run (Windows PowerShell)
+
+```powershell
+git clone https://github.com/ustafandy/pawpal-ai-care-planner.git
+cd pawpal-ai-care-planner
 python -m venv .venv
-source .venv/bin/activate  # Windows: .venv\Scripts\activate
+.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
+
+# Optional: enables real AI recommendations (use your own key; never commit it)
+$env:ANTHROPIC_API_KEY = "<your-anthropic-api-key>"
+
+streamlit run app.py      # web app
+python -m pytest          # automated tests (no API key needed)
 ```
 
-### Run
+- **Without an API key** the app works fully. The AI section shows a warning and returns the standard deterministic plan.
+- **Real AI recommendations** need your own Anthropic API key. Each click of **Generate AI Care Plan** sends one paid API request.
+- The key is read only from the `ANTHROPIC_API_KEY` environment variable. It is never hardcoded, logged, or displayed.
+- `python main.py` still runs the original CLI demo, which does not use AI.
 
-```bash
-streamlit run app.py   # interactive web app
-python main.py         # CLI demo with sample data
-python -m pytest       # automated tests
-```
+---
 
-### Project files
+## Sample interactions
 
-| File | Purpose |
-|------|---------|
-| `pawpal_system.py` | Core classes: `Task`, `Pet`, `Owner`, `Scheduler` |
-| `app.py` | Streamlit UI built on the core classes |
-| `main.py` | CLI demo of scheduling, sorting, recurrence, filtering, and conflicts |
-| `tests/test_pawpal.py` | Automated pytest suite |
-| `diagrams/uml.mmd` | Original Phase 1 UML design |
-| `diagrams/uml_final.mmd` | Final UML matching the finished code |
-| `reflection.md` | Design, testing, and AI-collaboration reflection |
+### A. Successful real AI run (manually verified)
 
-## 🧩 Implementation Summary
+*One manually verified real Anthropic API run. This is a demonstration, not a consistency benchmark.*
 
-The core logic lives in `pawpal_system.py`:
+- **Input:** "Mochi needs her medication tonight. Biscuit has a lot of energy today, but I only have 45 minutes."
+- **Claude recommended:** raise Mochi's **Medication** from **medium → high**.
+- **Validation:** passed (✅ "AI recommendation passed validation").
+- **Effective minutes:** 45.
+- **Scheduled:**
+  1. Mochi, Medication (10 min, high)
+  2. Biscuit, Feed (10 min, high)
+- **Skipped:** Biscuit, Walk (30 min, high). The three high-priority tasks totaled 50 minutes, but only 45 were available.
 
-- **Task** represents one care activity (title, duration, priority, completion status, start time, frequency, and due date). It can mark itself complete, create its next occurrence if it repeats, and turn its priority into a number for sorting.
-- **Pet** stores a pet's details and manages its tasks (add, remove, list pending, and complete a task, which adds the next occurrence for recurring tasks).
-- **Owner** manages multiple pets and exposes all of their tasks as `(Pet, Task)` pairs, so each task keeps its pet context.
-- **Scheduler** retrieves tasks through the Owner and builds the daily plan: it skips completed and future tasks, orders the rest by priority (shorter tasks first on ties), fits them into the owner's available minutes, and explains why each task was scheduled or skipped. It also sorts, filters, and checks tasks for conflicts.
+This shows the split of responsibilities. Claude decided what mattered more, and the
+deterministic Scheduler enforced the time limit.
 
-The final class diagram is in `diagrams/uml_final.mmd`. The original design is kept in `diagrams/uml.mmd` for comparison.
+### B. Guardrail violation: AI tries to add time
 
-## 📐 Smarter Scheduling
+*From the automated test `test_ai_cannot_increase_available_time_beyond_owner_setting`.*
 
-Each `Task` also has a scheduled `time` (`"HH:MM"`, 24-hour), a `frequency` (`"none"`, `"daily"`, or `"weekly"`), and a `due_date`. All three have defaults, so older code like `Task("Walk", 30, "high")` still works. Every method below works across all of the owner's pets and returns `(Pet, Task)` pairs, so each task keeps its pet.
+- **Setup:** the owner has 45 minutes, but the AI response returns `"available_minutes": 120`.
+- **Result:** the **entire** recommendation is rejected (all-or-nothing).
+- **UI:** ⚠️ "The AI planner was not used… PawPal+ safely used the standard deterministic scheduler instead." The guardrail note says `available_minutes 120 is outside 1..45`.
+- **Plan:** the standard deterministic plan, with effective minutes still 45.
 
-| Feature | Method(s) | Behavior |
-|---------|-----------|----------|
-| Task sorting | `Scheduler.sort_by_time()` | Orders tasks by `due_date`, then by `time`. Zero-padded `"HH:MM"` strings sort chronologically, so times are compared directly. Sorts all of the owner's tasks by default, or a list you pass in (for example, a filtered list). |
-| Filtering | `Scheduler.filter_tasks(pet_name=None, completed=None)` | Filters by pet name (case-insensitive), by completion status, or both. A filter left as `None` is not applied. Returns the original Task objects, not copies. |
-| Recurring tasks | `Task.next_occurrence()`, `Pet.complete_task(task)` | `complete_task` marks a task done and, for `"daily"` (+1 day) or `"weekly"` (+7 days) tasks, adds a new copy with the next `due_date` to the same pet. Completing an already-completed task does nothing, so repeated calls never create duplicates. `generate_plan()` only plans tasks due today or earlier, so tomorrow's copy is not added to today's plan. |
-| Conflict detection | `Scheduler.detect_conflicts()` | Groups unfinished tasks by `(due_date, time)` and returns a warning for every slot with more than one task, including tasks for different pets. It returns warnings instead of raising errors. Only exact start-time matches are detected; overlapping durations are not. |
+### C. Missing API key / API unavailable
 
-## 📸 Demo Walkthrough
+*From the automated tests `test_missing_api_key_falls_back_without_calling_the_api` and `test_api_client_failure_falls_back`.*
 
-### What you can do in the app
+- **Setup:** `ANTHROPIC_API_KEY` is not set, or the API or network fails.
+- **Result:** no request is sent when the key is missing. The planner logs the problem and falls back.
+- **UI:** a warning plus the guardrail note "AI was unavailable (ANTHROPIC_API_KEY is not set), so the standard plan was used."
+- **Plan:** the normal deterministic plan, so the app stays fully usable.
 
-Run `streamlit run app.py`. The page has three sections:
+---
 
-| Section | Actions |
-|---------|---------|
-| **Owner & Pets** | Set the owner's name and available minutes for today. Add pets (name and species); duplicate pet names are rejected. A table lists each pet and its task count. |
-| **Tasks** | Add a task for a chosen pet with title, duration, priority, start time, repeat frequency, and due date. View all tasks sorted by date and time, and filter by pet and by status (all/pending/completed). Mark a pending task complete. Conflict warnings, or a "no conflicts" confirmation, appear below the task list. |
-| **Build Schedule** | Click **Generate schedule** to see today's plan as a table, the minutes used, any skipped tasks, a conflict reminder, and a "Why this plan?" explanation. |
+## Reliability and testing
 
-Pets and tasks are kept in `st.session_state`, so they persist while you use the app. The UI calls the `Scheduler` methods directly and has no scheduling logic of its own.
-
-### Example workflow
-
-1. **Create the owner and pets.** Enter owner name `Jordan` with `90` available minutes. Add `Biscuit` (dog) and `Mochi` (cat).
-2. **Add tasks.**
-   - Biscuit: "Morning walk" (30 min, high, 07:00, daily), "Feeding" (10 min, high, 12:30), "Fetch in the yard" (40 min, low, 17:00).
-   - Mochi: "Feeding" (5 min, high, 06:45), "Give medication" (5 min, medium, 12:30), "Brush fur" (15 min, medium, 19:15, weekly).
-3. **Review the task list.** The table is sorted by date and time. Set **Show pet** to `Mochi` to see only Mochi's tasks, or **Show status** to `Pending` to hide finished ones.
-4. **Check conflicts.** Biscuit's "Feeding" and Mochi's "Give medication" are both at 12:30 today, so a warning appears: `Conflict on <today> at 12:30: 'Feeding' (Biscuit), 'Give medication' (Mochi)`.
-5. **Generate the schedule.** The plan includes the three high-priority tasks and the two medium-priority tasks (65 of 90 minutes). "Fetch in the yard" (40 min) is skipped because only 25 minutes are left, and the explanation says so.
-6. **Complete a recurring task.** Mark Biscuit's "Morning walk" complete. A confirmation appears, and a new "Morning walk" is added for tomorrow at 07:00. It appears in the task list but is not part of today's plan.
-
-### Scheduler behavior to notice
-
-- **Plan order vs. time order:** the generated plan is ordered by **priority**, then duration, which decides what fits in the available time. The task list is ordered by **date and time** using `sort_by_time()`.
-- **Filtering** only changes which tasks are shown. The scheduler still plans across every pet.
-- **Recurrence** happens when a task is completed. The next occurrence is a new, pending task with a later due date. Completing the same task again does nothing.
-- **Conflict warnings** flag pending tasks with the same date and start time. Completed tasks and tasks on different days are ignored, and overlapping durations (for example, a 30-minute walk at 07:00 and a feeding at 07:15) are not flagged.
-
-### CLI demo
-
-`python main.py` runs the same scenario with sample data. Actual output (run on 2026-10-20):
-
-```
-==================================================
-Today's Schedule for Jordan's pets
-==================================================
-  08:00  Feeding            for Mochi    (5 min) [priority: high]
-  08:05  Feeding            for Biscuit  (10 min) [priority: high]
-  08:15  Morning walk       for Biscuit  (30 min) [priority: high]
-  08:45  Give medication    for Mochi    (5 min) [priority: medium]
-  08:50  Brush fur          for Mochi    (15 min) [priority: medium]
-
-Skipped (not enough time):
-  - Fetch in the yard for Biscuit (40 min)
-
-Why this plan:
-Jordan has 90 minutes available today.
-Tasks are chosen by priority (high first), then shorter tasks first.
-- Scheduled 'Feeding' for Mochi: high priority, 5 min (total so far: 5 min).
-- Scheduled 'Feeding' for Biscuit: high priority, 10 min (total so far: 15 min).
-- Scheduled 'Morning walk' for Biscuit: high priority, 30 min (total so far: 45 min).
-- Scheduled 'Give medication' for Mochi: medium priority, 5 min (total so far: 50 min).
-- Scheduled 'Brush fur' for Mochi: medium priority, 15 min (total so far: 65 min).
-- Skipped 'Fetch in the yard' for Biscuit: needs 40 min, but only 25 min were left.
-
-==================================================
-1. Sorting: all tasks by scheduled time
-==================================================
-  2026-10-20 06:45  Feeding            for Mochi    [none, pending]
-  2026-10-20 07:00  Morning walk       for Biscuit  [daily, pending]
-  2026-10-20 12:30  Feeding            for Biscuit  [none, pending]
-  2026-10-20 12:30  Give medication    for Mochi    [none, pending]
-  2026-10-20 17:00  Fetch in the yard  for Biscuit  [none, pending]
-  2026-10-20 19:15  Brush fur          for Mochi    [weekly, pending]
-
-==================================================
-2. Recurring: completing daily and weekly tasks
-==================================================
-  Completed 'Morning walk' due 2026-10-20 (daily)
-  -> next occurrence added for 2026-10-21 at 07:00
-  Completed 'Brush fur' due 2026-10-20 (weekly)
-  -> next occurrence added for 2026-10-27 at 19:15
-  Completing 'Morning walk' again creates: None (no duplicate)
-
-==================================================
-3. Filtering
-==================================================
-Biscuit's tasks:
-  2026-10-20 07:00  Morning walk       for Biscuit  [daily, done]
-  2026-10-20 12:30  Feeding            for Biscuit  [none, pending]
-  2026-10-20 17:00  Fetch in the yard  for Biscuit  [none, pending]
-  2026-10-21 07:00  Morning walk       for Biscuit  [daily, pending]
-Completed tasks (any pet):
-  2026-10-20 07:00  Morning walk       for Biscuit  [daily, done]
-  2026-10-20 19:15  Brush fur          for Mochi    [weekly, done]
-Mochi's pending tasks:
-  2026-10-20 06:45  Feeding            for Mochi    [none, pending]
-  2026-10-20 12:30  Give medication    for Mochi    [none, pending]
-  2026-10-27 19:15  Brush fur          for Mochi    [weekly, pending]
-
-==================================================
-4. Conflict detection
-==================================================
-  WARNING: Conflict on 2026-10-20 at 12:30: 'Feeding' (Biscuit), 'Give medication' (Mochi)
-```
-
-In the CLI, the clock times in the first section are display slots starting at 08:00 in plan order. They show how the plan would run back to back. Dates in the output depend on the day you run it.
-
-**Screenshot or video** *(optional)*: <!-- Insert a screenshot or link to a demo video here -->
-
-## 🧪 Testing PawPal+
-
-Run the full test suite from the project root:
-
-```bash
+```powershell
 python -m pytest
 ```
 
-The suite in `tests/test_pawpal.py` covers:
+**48 tests pass:**
+- **17** original PawPal+ tests: scheduling, sorting, filtering, recurrence, conflicts, edge cases.
+- **31** AI and reliability tests in `tests/test_ai_planner.py`. They use **fake AI clients**, so they run offline, need no API key, and make **no paid API calls**.
 
-- **Sorting:** `sort_by_time()` orders tasks by due date and then by time, across pets. It also checks that `"7:05"` is stored as `"07:05"` so the times sort correctly.
-- **Recurrence:** completing a daily or weekly task adds exactly one next occurrence (+1 day or +7 days, including across a month end). Completing a task twice doesn't create duplicates, one-time tasks don't repeat, and tomorrow's copy is left out of today's plan.
-- **Conflict detection:** pending tasks at the same date and time are flagged, including across pets. Completed tasks and tasks on other days are ignored.
-- **Scheduling:** tasks are planned by priority across all pets, completed tasks are skipped, and the plan stays within the available minutes. A task that exactly fills the remaining time is still scheduled.
-- **Filtering:** by pet name (case-insensitive), by completion status, or both.
-- **Edge cases and invalid input:** a pet with no tasks gives an empty plan with a clear explanation. Invalid times and unknown frequencies raise `ValueError`.
+**Key guardrails.** The whole response is rejected if any of these fail:
+- exact JSON schema, with no extra or missing fields;
+- task IDs must exist and match their pet;
+- priority must be `low`, `medium`, or `high`;
+- an owner-set **high** priority is never lowered;
+- `available_minutes` must be `null` or between 1 and the owner's setting;
+- no duplicate task IDs.
 
-Test output:
+API failures, a missing key or SDK, and blank notes also fall back safely. Logging records
+each request, validation result, failure, and fallback, without secrets.
 
-```
-============================= test session starts =============================
-platform win32 -- Python 3.13.0, pytest-9.1.1, pluggy-1.7.0
-collected 17 items
+Every test case, plus the real run, is listed in **[evaluation.md](evaluation.md)**.
 
-tests\test_pawpal.py .................                                   [100%]
+---
 
-============================= 17 passed in 0.08s ==============================
-```
+## Responsible AI and limitations
 
-**Confidence Level: ★★★★☆ (4/5)**
+- Claude's recommendations can vary between runs, and only one real run was verified.
+- The Scheduler's "shorter first" rule can push out longer tasks such as walks.
+- Claude can only change priorities, so ideas like "shorten the walk" can't be acted on.
+- Pet names, task titles, and the owner's note are sent to Anthropic.
+- The plan is **not veterinary advice**.
 
-Each core feature has tests for both the normal case and its key edge cases, using fixed dates so results are repeatable. It isn't 5 stars because of these known gaps:
+Prompt-injection risks are limited by the guardrails: high-priority tasks can't be lowered,
+time can't increase, and tasks can't be added or deleted. A medium task *can* still be
+lowered to low.
 
-- Conflict detection only catches identical start times, not overlapping durations.
-- An invalid priority is only rejected when a plan is generated, not when the task is created.
-- `generate_plan()` depends on the real current date.
-- The Streamlit UI is not tested automatically.
+The full discussion is in **[model_card.md](model_card.md)**.
+
+---
+
+## Design decisions and trade-offs
+
+- **The deterministic Scheduler is the final authority.** The AI influences only its inputs, so plans stay explainable and the time limit is always enforced by code.
+- **Planning happens on a deep copy.** The user's saved tasks can never be changed by AI, and `pawpal_system.py` needed no changes.
+- **All-or-nothing validation instead of partial acceptance.** One invalid item rejects the whole response. This is more predictable and safer, because a partly wrong answer is treated as untrustworthy. It is also easier to test and explain. The trade-off is that a mostly good answer can be discarded.
+- **Narrow AI permissions.** Claude cannot create or delete tasks, change durations, times, or recurrence, or mark tasks complete.
+- **Owner-set high priority is protected.** Claude can never lower it.
+- **Time can only shrink.** Claude may keep or reduce the owner's minutes but never increase them. An attempted increase is a validation failure, not a silent cap.
+
+---
+
+## Repository structure
+
+| File | Purpose |
+|------|---------|
+| `app.py` | Streamlit UI: original pet/task/schedule sections plus the new **AI Care Planner** section |
+| `pawpal_system.py` | Original core classes: `Task`, `Pet`, `Owner`, `Scheduler` (unchanged) |
+| `ai_planner.py` | AI layer: context building, Claude client, validation, deep-copy planning, fallback |
+| `main.py` | Original CLI demo (no AI) |
+| `tests/test_pawpal.py` | 17 original tests |
+| `tests/test_ai_planner.py` | 31 AI/reliability tests (offline, fake clients) |
+| `diagrams/architecture.mmd` | Final-project architecture diagram (authoritative) |
+| `diagrams/uml.mmd`, `diagrams/uml_final.mmd` | Module 2 class diagrams |
+| `evaluation.md` | Reliability evidence: test cases and the real API run |
+| `model_card.md` | Purpose, guardrails, limitations, misuse, AI-collaboration reflection |
+| `reflection.md` | Module 2 project reflection |
+| `ai_interactions.md` | Module 2 stretch-feature template (not used for this project) |
+| `requirements.txt` | `streamlit`, `pytest`, `anthropic` |
+
+---
+
+## What this project says about me as an AI engineer
+
+The main thing I learned is that building an AI system is not just connecting an LLM to an
+app. Most of my effort went into deciding **what the model is allowed to change**. Then I
+validated its output as untrusted data, kept the original deterministic scheduler in
+charge, tested how the system fails (bad JSON, made-up task IDs, attempts to add time,
+missing keys), and made sure the app still works when the AI doesn't.
+
+I built this project with help from an AI coding assistant. I made the design decisions
+and reviewed and tested its suggestions, and I also changed some of them. The biggest
+change was moving from partial acceptance to all-or-nothing validation. That
+collaboration is documented honestly in [model_card.md](model_card.md).

@@ -1,0 +1,38 @@
+%% PawPal+ AI Care Planner: system architecture (matches ai_planner.py + app.py)
+%% Claude only RECOMMENDS. The deterministic Scheduler always builds the final plan.
+flowchart TD
+    OWNER["Owner, Pets, Tasks<br/>(entered in the Streamlit app)"]
+    NOTE["Today's situation<br/>(owner's free-text note)"]
+
+    CONTEXT["AI Planner: build context<br/>pending tasks due today with short IDs (t1, t2, ...)<br/>+ owner's available minutes"]
+    CLAUDE["Anthropic Claude<br/>advises only: priority changes<br/>and/or a smaller time budget"]
+    CHECK{"Validation + guardrails<br/>(all-or-nothing)<br/>exact JSON schema · known task IDs<br/>pet matches task · priority is low/medium/high<br/>owner-set HIGH never lowered<br/>minutes never above owner's setting"}
+
+    COPY["Apply recommendation to a<br/>DEEP COPY of the Owner<br/>(real tasks never changed)"]
+    FALLBACK["Safe fallback:<br/>ORIGINAL Owner, unchanged"]
+
+    SCHED[["Deterministic Scheduler (existing code)<br/>high priority first → shorter tasks first<br/>→ add tasks until minutes run out"]]
+    PLAN["Final Care Plan<br/>schedule · skipped tasks · explanation<br/>used_ai flag · reasons or warnings"]
+
+    OWNER --> CONTEXT
+    NOTE --> CONTEXT
+    CONTEXT -- "context + note" --> CLAUDE
+    CLAUDE -- "structured JSON recommendation" --> CHECK
+    CHECK -- "valid" --> COPY
+    COPY --> SCHED
+
+    CHECK -- "invalid: any rule broken" --> FALLBACK
+    CLAUDE -. "API error · missing API key<br/>· SDK not installed" .-> FALLBACK
+    NOTE -. "blank note: AI not called" .-> FALLBACK
+    FALLBACK --> SCHED
+
+    SCHED --> PLAN
+
+    classDef ai fill:#ede7f6,stroke:#5e35b1,color:#000
+    classDef guard fill:#fff8e1,stroke:#f9a825,color:#000
+    classDef safe fill:#ffebee,stroke:#c62828,color:#000
+    classDef core fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px,color:#000
+    class CONTEXT,CLAUDE ai
+    class CHECK guard
+    class FALLBACK safe
+    class SCHED,PLAN,COPY core
